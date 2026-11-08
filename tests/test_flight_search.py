@@ -71,8 +71,12 @@ class FlightSearchTests(unittest.TestCase):
         self.assertEqual(query.flight_data[0].from_airport.airport, "JFK")
         self.assertEqual(query.flight_data[0].to_airport.airport, "SFO")
         self.assertEqual(query.flight_data[0].date, "2026-12-01")
-        self.assertEqual(set(result), {"currency", "current_price", "flights"})
         self.assertEqual(result["currency"], "USD")
+        self.assertEqual(result["search"]["trip_type"], "one-way")
+        self.assertEqual(result["search"]["adults"], 1)
+        self.assertEqual(result["search"]["cabin"], "economy")
+        self.assertEqual(result["result_scope"], "one_way_itineraries")
+        self.assertEqual(result["price_scope"], "one-way_all_passengers")
         flight = result["flights"][0]
         self.assertEqual(flight["name"], "American")
         self.assertEqual(flight["price"], "$364")
@@ -112,7 +116,9 @@ class FlightSearchTests(unittest.TestCase):
     @patch("flight_search.fetch_flights_html", return_value=response(best=[], remaining=[]))
     def test_empty_results(self, _fetch):
         result = flight_search.search_flights("JFK", "SFO", "2026-12-01")
-        self.assertEqual(result, {"currency": "USD", "current_price": None, "flights": []})
+        self.assertEqual(result["flights"], [])
+        self.assertEqual(result["currency"], "USD")
+        self.assertIsNone(result["current_price"])
 
     @patch("flight_search.fetch_flights_html")
     def test_price_assessment_from_same_page(self, fetch):
@@ -160,7 +166,6 @@ class FlightSearchTests(unittest.TestCase):
         reply = mcp_server.handle_request(request)
         self.assertEqual(reply["id"], 42)
         data = json.loads(reply["result"]["content"][0]["text"])
-        self.assertEqual(set(data), {"currency", "current_price", "flights"})
         self.assertEqual(data["current_price"], "typical")
         self.assertEqual(data["currency"], "USD")
         self.assertEqual(len(data["flights"]), 10)
@@ -172,9 +177,70 @@ class FlightSearchTests(unittest.TestCase):
         ):
             search.main()
         cli_data = json.loads(output.getvalue())
-        self.assertEqual(set(cli_data), {"currency", "current_price", "flights"})
         self.assertEqual(cli_data["current_price"], "typical")
         self.assertEqual(len(cli_data["flights"]), 12)
+
+    @patch("flight_search.fetch_flights_html")
+    def test_round_trip_options_reach_mcp_and_cli_without_multiplying_prices(self, fetch):
+        fetch.return_value = response(best=[itinerary(price=1980)])
+        options = {
+            "origin": "jfk", "destination": "cdg", "date": "2027-05-01",
+            "return_date": "2027-05-10", "cabin": "business", "adults": 2, "children": 1,
+            "infants_in_seat": 1, "infants_on_lap": 1, "carry_on_bags": 1, "checked_bags": 2,
+        }
+        reply = mcp_server.handle_request({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                "name": "search_flights", "arguments": options,
+            },
+        })
+        mcp_data = json.loads(reply["result"]["content"][0]["text"])
+        query = fetch.call_args.args[0]
+        self.assertEqual(query.get_trip_type(), "round-trip")
+        self.assertEqual(query.get_seat_type(), "business")
+        self.assertEqual(query.passengers, [1, 1, 2, 3, 4])
+        self.assertEqual(query.flight_data[1].from_airport.airport, "CDG")
+        self.assertEqual(query.flight_data[1].to_airport.airport, "JFK")
+        self.assertEqual(query.flight_data[1].date, "2027-05-10")
+        self.assertEqual(query.pb().baggage.carry_on_bags, 1)
+        self.assertEqual(query.pb().baggage.checked_bags, 2)
+        self.assertEqual(mcp_data["flights"][0]["price"], "$1,980")
+        self.assertEqual(mcp_data["result_scope"], "outbound_options")
+        self.assertEqual(mcp_data["price_scope"], "round-trip_all_passengers")
+        self.assertEqual(mcp_data["search_url"], query.url())
+        self.assertIn("outbound journey", " ".join(mcp_data["notes"]))
+        self.assertIn("does not verify bag", " ".join(mcp_data["notes"]))
+        self.assertIn("mixed-cabin", " ".join(mcp_data["notes"]))
+        self.assertEqual(mcp_data["search"], {
+            **options, "origin": "JFK", "destination": "CDG", "trip_type": "round-trip",
+        })
+        argv = ["search.py", "jfk", "cdg", "2027-05-01"]
+        for name, value in options.items():
+            if name not in ("origin", "destination", "date"):
+                argv.extend(["--" + name.replace("_", "-"), str(value)])
+        output = StringIO()
+        with patch.object(sys, "argv", argv), redirect_stdout(output):
+            search.main()
+        self.assertEqual(json.loads(output.getvalue()), mcp_data)
+
+    @patch("flight_search.fetch_flights_html")
+    def test_invalid_mcp_inputs_fail_before_fetching(self, fetch):
+        for options in (
+            {"adults": 0}, {"children": -1}, {"adults": True}, {"infants_in_seat": 0.5},
+            {"adults": 9, "children": 1}, {"infants_on_lap": 2}, {"cabin": "12A"},
+            {"return_date": "2026-11-30"}, {"carry_on_bags": 2}, {"checked_bags": 3},
+            {"limit": 100}, {"seat_selection": "12A"}, {"origin": None},
+        ):
+            with self.subTest(options=options):
+                reply = mcp_server.handle_request({
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                        "name": "search_flights", "arguments": {
+                            "origin": "JFK", "destination": "SFO", "date": "2026-12-01",
+                            **options,
+                        },
+                    },
+                })
+                self.assertIn("error", reply)
+                fetch.assert_not_called()
 
     @patch("flight_search.fetch_flights_html", side_effect=RuntimeError("Search unavailable"))
     def test_mcp_reports_upstream_errors(self, _fetch):

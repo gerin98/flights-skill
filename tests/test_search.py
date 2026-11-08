@@ -36,6 +36,19 @@ class SearchCliTests(unittest.TestCase):
             search.main()
         self.assertEqual(json.loads(output.getvalue()), {"error": "Search unavailable"})
 
+    @patch("search.search_flights")
+    def test_invalid_flags_are_json_without_searching(self, fetch):
+        for flags in (["--adults", "two"], ["--seat", "12A"], ["--cabin", "luxury"]):
+            with self.subTest(flags=flags):
+                output = StringIO()
+                with (
+                    patch.object(sys, "argv", ["search.py", "JFK", "CDG", "2027-05-01", *flags]),
+                    redirect_stdout(output),
+                ):
+                    search.main()
+                self.assertIn("error", json.loads(output.getvalue()))
+                fetch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

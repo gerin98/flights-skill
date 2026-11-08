@@ -3,10 +3,12 @@
 from datetime import datetime
 import json
 
-from fast_flights import FlightQuery, Passengers, create_query, fetch_flights_html
+from fast_flights import fetch_flights_html
 from fast_flights.model import Flights, SimpleDatetime
 from fast_flights.parser import parse_js
 from selectolax.lexbor import LexborHTMLParser
+
+from search_options import SearchRequest
 
 
 def _parse_results(parser: LexborHTMLParser) -> list[tuple[Flights, int]]:
@@ -70,16 +72,12 @@ def _serialize_flight(flight: Flights, total_minutes: int) -> dict:
     }
 
 
-def search_flights(origin: str, destination: str, date: str, *, limit: int | None = None) -> dict:
+def search_flights(
+    origin: str, destination: str, date: str, *, limit: int | None = None, **options,
+) -> dict:
     """Return USD fares, full journey durations, and Google's search price assessment."""
-    query = create_query(
-        flights=[FlightQuery(date=date, from_airport=origin, to_airport=destination)],
-        trip="one-way",
-        seat="economy",
-        passengers=Passengers(adults=1),
-        language="en",
-        currency="USD",
-    )
+    request = SearchRequest(origin=origin, destination=destination, date=date, **options)
+    query = request.query()
     parser = LexborHTMLParser(fetch_flights_html(query))
     results = _parse_results(parser)
     # The v3 model omits Google's search-wide price assessment in the HTML.
@@ -90,5 +88,10 @@ def search_flights(origin: str, destination: str, date: str, *, limit: int | Non
     return {
         "currency": "USD",
         "current_price": current_price,
+        "search": request.metadata(),
+        "search_url": query.url(),
+        "price_scope": f"{request.trip_type}_all_passengers",
+        "result_scope": "outbound_options" if request.return_date else "one_way_itineraries",
+        "notes": request.notes(),
         "flights": [_serialize_flight(flight, duration) for flight, duration in results[:limit]],
     }

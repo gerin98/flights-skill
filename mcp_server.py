@@ -4,15 +4,21 @@ import sys
 import json
 import logging
 from flight_search import search_flights
+from search_options import SEARCH_SCHEMA
 
 # Configure logging to file since stdout is used for protocol
 logging.basicConfig(filename='mcp_server.log', level=logging.INFO)
 
-def search_logic(origin, dest, date):
+def search_logic(arguments):
     """Search up to ten itineraries and log failures before propagating them."""
-    logging.info("Searching: %s -> %s on %s", origin, dest, date)
+    if not isinstance(arguments, dict):
+        raise ValueError("Tool arguments must be an object")
+    unknown = set(arguments) - set(SEARCH_SCHEMA["properties"])
+    if unknown:
+        raise ValueError(f"Unsupported search options: {', '.join(sorted(unknown))}")
+    logging.info("Searching: %s", arguments)
     try:
-        return search_flights(origin, dest, date, limit=10)
+        return search_flights(**arguments, limit=10)
     except Exception:
         logging.exception("Search failed")
         raise
@@ -47,24 +53,15 @@ def handle_request(req):
                 "tools": [{
                     "name": "search_flights",
                     "description": (
-                        "Search one-way economy flights for one adult using Google Flights. "
-                        "Prices are in USD, itinerary durations include layovers, "
-                        "and dates and times are local to each airport."
+                        "Search Google Flights with optional return date, passenger counts, "
+                        "cabin class, and baggage filters. Defaults: one-way, one adult, economy. "
+                        "Prices are USD totals for all requested passengers. Round-trip results "
+                        "are outbound options with round-trip fares; choose the return at "
+                        "search_url. Durations cover the returned journey including layovers. "
+                        "Bag fees and each segment's cabin require confirmation. "
+                        "Specific seat selection is not supported. Times are airport-local."
                     ),
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "origin": {
-                                "type": "string", "description": "Origin Airport Code (e.g. SFO)"
-                            },
-                            "destination": {
-                                "type": "string",
-                                "description": "Destination Airport Code (e.g. JFK)"
-                            },
-                            "date": { "type": "string", "description": "Date in YYYY-MM-DD format" }
-                        },
-                        "required": ["origin", "destination", "date"]
-                    }
+                    "inputSchema": SEARCH_SCHEMA,
                 }]
             }
         }
@@ -74,7 +71,7 @@ def handle_request(req):
         if params.get("name") == "search_flights":
             args = params.get("arguments", {})
             try:
-                data = search_logic(args.get("origin"), args.get("destination"), args.get("date"))
+                data = search_logic(args)
                 return {
                     "jsonrpc": "2.0",
                     "id": msg_id,
