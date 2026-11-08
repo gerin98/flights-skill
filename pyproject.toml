@@ -5,10 +5,14 @@ description = "A Google Flights search script and MCP server"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fast-flights==2.2",
-    "primp==0.15.0",
+    "fast-flights==3.1.0",
+    "primp==2.0.1",
+    "selectolax>=1.0.2,<2",
     "typing-extensions>=4.12",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+fast-flights = { git = "https://github.com/AWeirdDev/flights.git", rev = "4261437c506b228d20969910178a19e6d1bd2592" }

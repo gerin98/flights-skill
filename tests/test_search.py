@@ -1,62 +1,30 @@
-import unittest
-from unittest.mock import patch, MagicMock
-import sys
+from contextlib import redirect_stdout
+from io import StringIO
 import json
-import os
+from pathlib import Path
+import sys
+import unittest
+from unittest.mock import patch
 
-# Add parent directory to path to import search.py
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Also allow running this file directly, as documented by the original repo.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import search
 
-class TestFlightSearch(unittest.TestCase):
 
-    @patch('search.get_flights')
-    def test_search_output(self, mock_get_flights):
-        # Mock the Result object
-        mock_result = MagicMock()
-        mock_result.current_price = "low"
-        
-        # Mock Flight object
-        mock_flight = MagicMock()
-        mock_flight.name = "Delta"
-        mock_flight.price = "$100"
-        mock_flight.duration = "5h"
-        mock_flight.departure = "10:00 AM"
-        mock_flight.arrival = "3:00 PM"
-        mock_flight.stops = 0
-        
-        mock_result.flights = [mock_flight]
-        mock_get_flights.return_value = mock_result
-        
-        # Capture stdout
-        from io import StringIO
-        captured_output = StringIO()
-        sys.stdout = captured_output
-        
-        # Run main with args
-        sys.argv = ['search.py', 'SFO', 'JFK', '2026-03-01']
-        search.main()
-        
-        sys.stdout = sys.__stdout__
-        
-        # Verify JSON
-        output = json.loads(captured_output.getvalue())
-        self.assertEqual(output['current_price'], "low")
-        self.assertEqual(output['flights'][0]['name'], "Delta")
-        self.assertEqual(len(output['flights']), 1)
-
+class SearchCliTests(unittest.TestCase):
     def test_missing_args(self):
-        sys.argv = ['search.py']
-        from io import StringIO
-        captured_output = StringIO()
-        sys.stdout = captured_output
-        
-        search.main()
-        sys.stdout = sys.__stdout__
-        
-        output = json.loads(captured_output.getvalue())
-        self.assertIn("error", output)
-        self.assertIn("Usage", output['error'])
+        output = StringIO()
+        with patch.object(sys, "argv", ["search.py"]), redirect_stdout(output):
+            search.main()
+        self.assertIn("Usage", json.loads(output.getvalue())["error"])
 
-if __name__ == '__main__':
+    @patch("search.search_flights", side_effect=RuntimeError("Search unavailable"))
+    def test_error_is_json(self, fetch):
+        output = StringIO()
+        with patch.object(sys, "argv", ["search.py", "JFK", "SFO", "2026-12-01"]), redirect_stdout(output):
+            search.main()
+        self.assertEqual(json.loads(output.getvalue()), {"error": "Search unavailable"})
+
+
+if __name__ == "__main__":
     unittest.main()

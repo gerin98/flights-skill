@@ -1,0 +1,82 @@
+"""Shared fast-flights v3 query and JSON conversion for the CLI and MCP server."""
+
+from datetime import datetime
+import json
+
+from fast_flights import FlightQuery, Passengers, create_query, fetch_flights_html
+from fast_flights.model import Flights, SimpleDatetime
+from fast_flights.parser import parse_js
+from selectolax.lexbor import LexborHTMLParser
+
+
+def _parse_results(html: str) -> list[tuple[Flights, int]]:
+    script = LexborHTMLParser(html).css_first(r"script.ds\:1")
+    if script is None:
+        raise ValueError("Google Flights response contains no flight data")
+    javascript = script.text()
+    flights = parse_js(javascript)
+
+    # Use the same payload and group order as the pinned fast-flights parser.
+    # Its model discards flight[9], Google's total minutes including layovers.
+    # Reading that value avoids calculating elapsed time from offset-free dates.
+    payload = json.loads(javascript.split("data:", 1)[1].rsplit(",", 1)[0])
+    durations = [
+        entry[0][9]
+        for section in payload[2:4] if section
+        for entry in section[0] or []
+    ]
+    return list(zip(flights, durations, strict=True))
+
+
+def _local_datetime(value: SimpleDatetime) -> str:
+    # v3 supplies airport-local dates and times, without a timezone or UTC offset.
+    return datetime(*value.date, *value.time).isoformat(timespec="minutes")
+
+
+def _duration(minutes: int) -> str:
+    hours, remainder = divmod(minutes, 60)
+    return f"{hours} hr {remainder} min" if hours else f"{remainder} min"
+
+
+def _serialize_flight(flight: Flights, total_minutes: int) -> dict:
+    if not flight.flights:
+        raise ValueError("Flight itinerary has no segments")
+    if type(total_minutes) is not int or total_minutes < sum(leg.duration for leg in flight.flights):
+        raise ValueError("Google Flights itinerary has an invalid total duration")
+
+    segments = [
+        {
+            "origin": leg.from_airport.code,
+            "destination": leg.to_airport.code,
+            "departure": _local_datetime(leg.departure),
+            "arrival": _local_datetime(leg.arrival),
+            "duration_minutes": leg.duration,
+        }
+        for leg in flight.flights
+    ]
+    return {
+        "name": ", ".join(flight.airlines),
+        "price": f"${flight.price:,}" if flight.price is not None else None,
+        "duration": _duration(total_minutes),
+        "duration_minutes": total_minutes,
+        "departure": segments[0]["departure"],
+        "arrival": segments[-1]["arrival"],
+        "stops": len(segments) - 1,
+        "segments": segments,
+    }
+
+
+def search_flights(origin: str, destination: str, date: str, *, limit: int | None = None) -> dict:
+    query = create_query(
+        flights=[FlightQuery(date=date, from_airport=origin, to_airport=destination)],
+        trip="one-way",
+        seat="economy",
+        passengers=Passengers(adults=1),
+        language="en",
+        currency="USD",
+    )
+    results = _parse_results(fetch_flights_html(query))
+    return {
+        "currency": "USD",
+        "flights": [_serialize_flight(flight, duration) for flight, duration in results[:limit]],
+    }

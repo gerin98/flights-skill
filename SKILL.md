@@ -22,7 +22,7 @@ The tool is `search_flights` and accepts:
 - `destination`: destination airport code, such as `SFO`.
 - `date`: future departure date in `YYYY-MM-DD` format.
 
-The server returns up to 10 flights. Prices retain Google's display currency; the server does not explicitly request USD.
+The server returns up to 10 flights and explicitly requests USD. The response includes `currency: "USD"`; fares are in each flight's `price` field, with `null` for a missing fare. Departure and arrival use ISO-formatted airport-local times without UTC offsets. Each flight's `duration` and `duration_minutes` include the full journey and any layovers. Its `segments` contain individual flying times, which exclude layovers. The old `current_price` assessment is no longer returned.
 
 ## Script integration
 

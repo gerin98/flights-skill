@@ -1,7 +1,7 @@
 import sys
 import json
 import logging
-from fast_flights import FlightData, Passengers, get_flights
+from flight_search import search_flights
 
 # Configure logging to file since stdout is used for protocol
 logging.basicConfig(filename='mcp_server.log', level=logging.INFO)
@@ -9,29 +9,7 @@ logging.basicConfig(filename='mcp_server.log', level=logging.INFO)
 def search_logic(origin, dest, date):
     logging.info(f"Searching: {origin} -> {dest} on {date}")
     try:
-        result = get_flights(
-            flight_data=[FlightData(date=date, from_airport=origin, to_airport=dest)],
-            trip="one-way",
-            seat="economy",
-            passengers=Passengers(adults=1, children=0, infants_in_seat=0, infants_on_lap=0),
-            fetch_mode="fallback"
-        )
-        
-        flights = []
-        for f in result.flights[:10]: # Limit to top 10
-            flights.append({
-                "name": f.name,
-                "price": f.price,
-                "duration": f.duration,
-                "departure": f.departure,
-                "arrival": f.arrival,
-                "stops": f.stops
-            })
-            
-        return {
-            "current_price": result.current_price,
-            "flights": flights
-        }
+        return search_flights(origin, dest, date, limit=10)
     except Exception as e:
         logging.error(f"Search failed: {e}")
         raise e
@@ -62,7 +40,7 @@ def handle_request(req):
             "result": {
                 "tools": [{
                     "name": "search_flights",
-                    "description": "Search for one-way flights using Google Flights data (Real-time pricing).",
+                    "description": "Search one-way economy flights for one adult using Google Flights. Prices are in USD, itinerary durations include layovers, and dates and times are local to each airport.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
