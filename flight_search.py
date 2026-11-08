@@ -9,8 +9,8 @@ from fast_flights.parser import parse_js
 from selectolax.lexbor import LexborHTMLParser
 
 
-def _parse_results(html: str) -> list[tuple[Flights, int]]:
-    script = LexborHTMLParser(html).css_first(r"script.ds\:1")
+def _parse_results(parser: LexborHTMLParser) -> list[tuple[Flights, int]]:
+    script = parser.css_first(r"script.ds\:1")
     if script is None:
         raise ValueError("Google Flights response contains no flight data")
     javascript = script.text()
@@ -75,8 +75,15 @@ def search_flights(origin: str, destination: str, date: str, *, limit: int | Non
         language="en",
         currency="USD",
     )
-    results = _parse_results(fetch_flights_html(query))
+    parser = LexborHTMLParser(fetch_flights_html(query))
+    results = _parse_results(parser)
+    # The v3 model omits Google's search-wide price assessment in the HTML.
+    price_node = parser.css_first("span.gOatQ")
+    current_price = price_node.text(strip=True).lower() if price_node else None
+    if current_price not in {"low", "typical", "high"}:
+        current_price = None
     return {
         "currency": "USD",
+        "current_price": current_price,
         "flights": [_serialize_flight(flight, duration) for flight, duration in results[:limit]],
     }

@@ -37,12 +37,12 @@ Run from the repository directory:
 uv run --locked --managed-python python search.py JFK SFO 2026-12-01
 ```
 
-Use a future departure date when trying the example. The script prints JSON with `currency` and a `flights` array. Each flight includes `name`, `price`, `duration`, `duration_minutes`, `departure`, `arrival`, `stops`, and a `segments` array with each leg's airport codes, times, and `duration_minutes`.
+Use a future departure date when trying the example. The script prints JSON with `currency`, `current_price`, and a `flights` array. Each flight includes `name`, `price`, `duration`, `duration_minutes`, `departure`, `arrival`, `stops`, and a `segments` array with each leg's airport codes, times, and `duration_minutes`.
 
 ### v3 response changes
 
 - Prices are USD strings, such as `"$364"`. A missing fare is `null`.
-- The old `current_price` low/typical/high assessment has been removed. The fare remains in each flight's `price` field.
+- `current_price` is Google's assessment for the overall search: `"low"`, `"typical"`, or `"high"`. It is extracted from `span.gOatQ` in the same HTML response, without another request, because the v3 model omits it. Missing, empty, or unrecognized assessments return `null`, including when Google changes the selector. Individual fares remain in each flight's `price` field.
 - Departure and arrival are ISO-formatted local airport times, such as `"2026-12-02T00:47"`. They do not include UTC offsets.
 - `duration` and `duration_minutes` describe the full itinerary, including layovers, for both nonstop and connecting flights. The adapter preserves Google's total duration from the same structured response because the v3 model drops it. This avoids deriving elapsed time from airport-local timestamps without UTC offsets. Each segment's `duration_minutes` describes only that flight leg.
 - The MCP returns up to 10 itineraries in upstream order; the CLI returns all available itineraries. The parser includes both Google's best-flight and remaining-flight groups.
@@ -115,7 +115,7 @@ Run the existing unit tests:
 uv run --locked --managed-python python -m unittest discover -s tests
 ```
 
-These tests cover query currency, v3 parsing and result conversion, overnight connections, full journey durations, missing fares, errors, and best/remaining-flight groups using synthetic responses. They do not verify that Google Flights is reachable or that its current pages can be parsed. After dependency changes, also start the MCP client and perform a real search. The total-duration adapter relies on the structured payload format used by the pinned parser; check both together when updating the upstream revision.
+These tests cover query currency, v3 parsing and result conversion, overnight connections, full journey durations, price assessments and their absence, missing fares, errors, and best/remaining-flight groups using synthetic responses. They do not verify that Google Flights is reachable or that its current pages can be parsed. After dependency changes, also start the MCP client and perform a real search. The total-duration adapter relies on the structured payload format used by the pinned parser; check both together when updating the upstream revision.
 
 Use `uv add PACKAGE` to add a dependency and update both `pyproject.toml` and `uv.lock`. Review and commit those files together. `uv lock --upgrade` does not advance the pinned fast-flights Git revision. To update other dependencies within the pinned direct requirements:
 

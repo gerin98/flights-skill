@@ -55,7 +55,7 @@ class FlightSearchTests(unittest.TestCase):
         self.assertEqual(query.flight_data[0].from_airport.airport, "JFK")
         self.assertEqual(query.flight_data[0].to_airport.airport, "SFO")
         self.assertEqual(query.flight_data[0].date, "2026-12-01")
-        self.assertEqual(set(result), {"currency", "flights"})
+        self.assertEqual(set(result), {"currency", "current_price", "flights"})
         self.assertEqual(result["currency"], "USD")
         flight = result["flights"][0]
         self.assertEqual(flight["name"], "American")
@@ -96,7 +96,26 @@ class FlightSearchTests(unittest.TestCase):
     @patch("flight_search.fetch_flights_html", return_value=response(best=[], remaining=[]))
     def test_empty_results(self, fetch):
         result = flight_search.search_flights("JFK", "SFO", "2026-12-01")
-        self.assertEqual(result, {"currency": "USD", "flights": []})
+        self.assertEqual(result, {"currency": "USD", "current_price": None, "flights": []})
+
+    @patch("flight_search.fetch_flights_html")
+    def test_price_assessment_from_same_page(self, fetch):
+        for markup, expected in (
+            ('<span class="gOatQ">low</span>', "low"),
+            ('<span class="gOatQ"> Typical </span>', "typical"),
+            ('<span class="gOatQ">high</span>', "high"),
+            ('', None),
+            ('<span class="gOatQ"></span>', None),
+            ('<span class="gOatQ">unknown</span>', None),
+            ('<span class="changed">typical</span>', None),
+        ):
+            with self.subTest(markup=markup):
+                fetch.reset_mock()
+                fetch.return_value = response(best=[itinerary()]) + markup
+                result = flight_search.search_flights("JFK", "SFO", "2026-12-01")
+                self.assertEqual(result["current_price"], expected)
+                self.assertEqual(len(result["flights"]), 1)
+                fetch.assert_called_once()
 
     @patch("flight_search.fetch_flights_html")
     def test_invalid_total_is_not_replaced_with_flying_time(self, fetch):
@@ -113,7 +132,7 @@ class FlightSearchTests(unittest.TestCase):
 
     @patch("flight_search.fetch_flights_html")
     def test_mcp_limits_results_but_cli_returns_all(self, fetch):
-        fetch.return_value = response(best=[itinerary() for _ in range(12)])
+        fetch.return_value = response(best=[itinerary() for _ in range(12)]) + '<span class="gOatQ">typical</span>'
         request = {"jsonrpc": "2.0", "id": 42, "method": "tools/call", "params": {
             "name": "search_flights", "arguments": {
                 "origin": "JFK", "destination": "SFO", "date": "2026-12-01",
@@ -122,7 +141,8 @@ class FlightSearchTests(unittest.TestCase):
         reply = mcp_server.handle_request(request)
         self.assertEqual(reply["id"], 42)
         data = json.loads(reply["result"]["content"][0]["text"])
-        self.assertEqual(set(data), {"currency", "flights"})
+        self.assertEqual(set(data), {"currency", "current_price", "flights"})
+        self.assertEqual(data["current_price"], "typical")
         self.assertEqual(data["currency"], "USD")
         self.assertEqual(len(data["flights"]), 10)
         self.assertEqual(data["flights"][0]["duration_minutes"], 407)
@@ -130,7 +150,8 @@ class FlightSearchTests(unittest.TestCase):
         with patch.object(sys, "argv", ["search.py", "JFK", "SFO", "2026-12-01"]), redirect_stdout(output):
             search.main()
         cli_data = json.loads(output.getvalue())
-        self.assertEqual(set(cli_data), {"currency", "flights"})
+        self.assertEqual(set(cli_data), {"currency", "current_price", "flights"})
+        self.assertEqual(cli_data["current_price"], "typical")
         self.assertEqual(len(cli_data["flights"]), 12)
 
     @patch("flight_search.fetch_flights_html", side_effect=RuntimeError("Search unavailable"))
