@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.15,<3.16"
 dependencies = [
     "fast-flights==3.1.0",
+    "playwright>=1.64.1",
     "primp==2.0.1",
     "selectolax>=1.0.2,<2",
     "typing-extensions>=4.12",

@@ -16,6 +16,14 @@ uv sync --locked --managed-python
 
 uv downloads Python 3.15 if needed and creates `.venv` in the repository. You do not need to install Python separately, activate the environment, or run pip manually.
 
+Searches and matching returns use direct HTTP requests. The optional fare-details lookup uses Playwright to read Google's dynamically loaded booking page in a fresh browser session. It uses an installed Google Chrome, or Playwright Chromium if Chrome is unavailable. To install Chromium:
+
+```sh
+uv run --locked --managed-python playwright install chromium
+```
+
+No API key or paid scraping service is required. The browser does not use your personal Chrome profile and never clicks airline checkout or booking buttons.
+
 The environment is defined by:
 
 - `.python-version`: the project's Python version, 3.15.
@@ -44,23 +52,35 @@ uv run --locked --managed-python python search.py JFK CDG 2027-05-01 \
 
 Use future dates when trying the examples. Run `python search.py --help` through `uv run` for all flags. The CLI accepts the same options as the MCP tool, with hyphens in flag names (for example, `--infants-on-lap`). Invalid arguments produce a JSON error.
 
-The response includes `currency`, `current_price`, and a `flights` array, plus `search` (the normalized input options), `search_url`, `price_scope`, `result_scope`, and explanatory `notes`. Each flight includes `name`, `price`, `duration`, `duration_minutes`, `departure`, `arrival`, `stops`, and a `segments` array with each leg's airport codes, times, and `duration_minutes`.
+The initial response includes `currency`, `current_price`, and a `flights` array, plus `search` (the normalized input options), `search_url`, `price_scope`, `result_scope`, and explanatory `notes`. Each flight includes `name`, `price`, `duration`, `duration_minutes`, `departure`, `arrival`, `stops`, and a `segments` array with each leg's airport codes, times, duration, airline code, and flight number when available.
+
+Round-trip outbound results contain `return_search_token` and `return_search_url`; one-way results contain `booking_token` and `booking_url`. Continue via the CLI using the corresponding token unchanged:
+
+```sh
+uv run --locked --managed-python python search.py returns 'RETURN_SEARCH_TOKEN'
+uv run --locked --managed-python python search.py fares 'BOOKING_TOKEN'
+```
+
+Continuation tokens encode the search and selected flight identities. They are not credentials or reservations. If Google omits identifiers, the result has `selection_unavailable: true` and can still be explored using `search_url`.
 
 ### Round trips, passenger totals, and baggage
 
-Providing `return_date` requests a round trip; omitting it requests one-way. **Round-trip results are outbound options with round-trip fares, not complete outbound-and-return itineraries.** Google expects you to select an outbound flight before choosing the return. Open `search_url` to continue that selection and confirm the final fare. The adapter does not combine unrelated one-way fares or invent return-flight details.
+Providing `return_date` requests a round trip; omitting it requests one-way. The initial round-trip search shows outbound options with round-trip fares. Call `search_return_flights` with an outbound's `return_search_token` to retrieve matching return flights. Its response includes `selected_outbound` and return options whose prices each cover that specific pair for the entire passenger group. It confirms the outbound identity in Google's response and never adds unrelated one-way fares together.
+
+Use a return option's `booking_token` with `get_booking_details` to inspect the exact itinerary's fare tiers, bag charges/allowances, and seat-selection terms reported by Google. The result includes `booking_options`, `baggage_policies`, `fee_notes`, and a `booking_url` with both flights selected for manual booking. For one-way flights, use the initial result's `booking_token` directly.
 
 - `price_scope` is `one-way_all_passengers` or `round-trip_all_passengers`. Fares are Google's quoted totals for the requested passenger group; do not multiply them by the passenger count again.
-- `result_scope` is `one_way_itineraries` or `outbound_options`. In a round-trip search, durations, timestamps, and segments describe the outbound journey only.
-- `carry_on_bags` and `checked_bags` are forwarded to the upstream query as baggage filters. Google's [bag-fee documentation](https://support.google.com/travel/answer/9074247?hl=en) describes estimated fees, but our response does not verify allowances or fee inclusion. Live checks confirmed the carry-on filter in the page; checked-bag inclusion could not be confirmed. Treat bag-inclusive totals as unverified until checked with the airline.
-- `cabin` requests economy, premium economy, business, or first. Google can include mixed-cabin connections. The current parser does not expose each segment's cabin, so confirm it on Google or with the airline. Choosing a specific seat (such as 12A) and seat-selection fees are not supported.
+- `result_scope` is `one_way_itineraries`, `outbound_options`, or `return_options`. Durations, timestamps, and segments describe the returned direction; matching return responses include the outbound separately as `selected_outbound`, without a second price to add.
+- `carry_on_bags` and `checked_bags` are forwarded as search filters. Filter inclusion alone is unverified. `get_booking_details` reads fare-specific baggage text, such as a first checked-bag charge or an included allowance, when Google publishes it. Bag charges are preserved as reported rather than automatically added to the group fare, since fee scope and passenger allowances can differ. Google's [bag-fee documentation](https://support.google.com/travel/answer/9074247?hl=en) describes these as estimates.
+- Fare details report seat-selection terms such as free selection, selection for a fee, or no selection. A missing detail is unknown, not free. Exact prices for a particular seat may still require the airline's seat map; the tool does not choose seats or make bookings.
+- `cabin` requests economy, premium economy, business, or first. Google can include mixed-cabin connections. The current search parser does not expose each segment's cabin, so confirm it on Google or with the airline.
 
 ### v3 response changes
 
 - Prices are USD strings, such as `"$364"`. A missing fare is `null`.
 - `current_price` is Google's assessment for the overall search: `"low"`, `"typical"`, or `"high"`. It is extracted from `span.gOatQ` in the same HTML response, without another request, because the v3 model omits it. Missing, empty, or unrecognized assessments return `null`, including when Google changes the selector. Individual fares remain in each flight's `price` field.
 - Departure and arrival are ISO-formatted local airport times, such as `"2026-12-02T00:47"`. They do not include UTC offsets.
-- `duration` and `duration_minutes` describe the returned journey, including layovers, for both nonstop and connecting flights. For round trips this is the outbound journey, not the sum of both directions. The adapter preserves Google's total duration from the same structured response because the v3 model drops it. This avoids deriving elapsed time from airport-local timestamps without UTC offsets. Each segment's `duration_minutes` describes only that flight leg.
+- `duration` and `duration_minutes` describe the returned journey, including layovers, for both nonstop and connecting flights. For round trips this is one direction, not the sum of both. The adapter preserves Google's total duration from the same structured response because the v3 model drops it. This avoids deriving elapsed time from airport-local timestamps without UTC offsets. Each segment's `duration_minutes` describes only that flight leg.
 - The MCP returns up to 10 itineraries in upstream order; the CLI returns all available itineraries. The parser includes both Google's best-flight and remaining-flight groups.
 
 ## MCP setup
@@ -101,7 +121,7 @@ Restart Claude Desktop after saving the configuration.
 
 ### Tool interface
 
-The MCP tool is `search_flights`:
+Start with `search_flights`:
 
 ```json
 {
@@ -112,6 +132,16 @@ The MCP tool is `search_flights`:
 ```
 
 For example, ask your MCP client to find one-way flights from JFK to SFO on a future date.
+
+The three MCP tools form a read-only selection flow:
+
+| Tool | Input | Result |
+| --- | --- | --- |
+| `search_flights` | Search options below | One-way itineraries or round-trip outbound options. |
+| `search_return_flights` | `selection_token`: an outbound's `return_search_token` | Matching return options, selected outbound details, combined fares, and booking tokens/URLs. |
+| `get_booking_details` | `booking_token`: a one-way or return option's token | Fare tiers with published bag/seat terms and a link to finish booking manually. |
+
+`get_booking_details` requires Chrome or Playwright Chromium. Missing or unrecognized fare data produces an error rather than being treated as a free allowance. No airline checkout or payment action is performed.
 
 Optional arguments:
 
@@ -164,11 +194,13 @@ git ls-files -z '*.py' | xargs -0 uv run --locked --managed-python pylint
 uv run --locked --managed-python python -m unittest discover -s tests -v
 ```
 
-The [CI workflow](.github/workflows/ci.yml) runs these lint and test commands on pushes and pull requests using Ubuntu and Python 3.15 from `.python-version`. It uses the official `astral-sh/setup-uv` action, a pinned uv version, and `uv.lock` for reproducible dependencies. Pylint checks all tracked Python files; add new files to Git before running that command locally. CI uses synthetic flight responses and makes no live Google Flights searches.
+The [CI workflow](.github/workflows/ci.yml) runs these lint and test commands on pushes and pull requests using Ubuntu and Python 3.15 from `.python-version`. It uses the official `astral-sh/setup-uv` action, a pinned uv version, and `uv.lock` for reproducible dependencies. Pylint checks all tracked Python files; add new files to Git before running that command locally. CI uses synthetic flight responses and fare HTML, without live searches or launching a browser.
 
 Pylint configuration is in `pyproject.toml`. It allows inspection of the compiled `selectolax.lexbor` module; intentional exceptions, such as broad error handling at the CLI/MCP boundary, are documented beside the code. Use `uv add --dev PACKAGE` for development tools.
 
 These tests cover query currency, round-trip routing, passenger/cabin/baggage options, input validation, v3 parsing and result conversion, overnight connections, full journey durations, price assessments and their absence, missing fares, errors, and best/remaining-flight groups using synthetic responses. They verify that CLI and MCP options reach the upstream query and that group fares are not multiplied again. They do not verify that Google Flights is reachable or that its current pages can be parsed. After dependency changes, also start the MCP client and perform a real search. The total-duration adapter relies on the structured payload format used by the pinned parser; check both together when updating the upstream revision.
+
+Continuation tests cover selected-flight encoding, token validation, matching the confirmed outbound, and preserving combined fares. Fare tests cover published baggage/seat terms, missing details, and preventing a round-trip fare lookup before a return is selected. Selected-flight protobuf fields and booking-page selectors are unofficial Google formats; live-check the full selection flow after upstream changes.
 
 Use `uv add PACKAGE` to add a dependency and update both `pyproject.toml` and `uv.lock`. Review and commit those files together. `uv lock --upgrade` does not advance the pinned fast-flights Git revision. To update other dependencies within the pinned direct requirements:
 

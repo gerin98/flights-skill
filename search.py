@@ -2,7 +2,9 @@
 
 import argparse
 import json
-from flight_search import search_flights
+import sys
+from booking_details import get_booking_details
+from flight_search import search_flights, search_return_flights
 from search_options import SEARCH_PROPERTIES
 
 
@@ -14,7 +16,10 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 
 def _arguments():
-    parser = JsonArgumentParser(description=__doc__)
+    parser = JsonArgumentParser(
+        description=__doc__,
+        epilog="Continue a selection with: search.py returns TOKEN or search.py fares TOKEN",
+    )
     for name in ("origin", "destination", "date"):
         parser.add_argument(name, help=SEARCH_PROPERTIES[name]["description"])
     for name, spec in SEARCH_PROPERTIES.items():
@@ -32,7 +37,14 @@ def _arguments():
 def main():
     """Parse search arguments and return results or errors as JSON."""
     try:
-        output = search_flights(**_arguments())
+        if len(sys.argv) > 1 and sys.argv[1] in {"returns", "fares"}:
+            parser = JsonArgumentParser(prog=f"search.py {sys.argv[1]}")
+            parser.add_argument("token", help="The corresponding token from a previous result")
+            args = parser.parse_args(sys.argv[2:])
+            action = search_return_flights if sys.argv[1] == "returns" else get_booking_details
+            output = action(args.token)
+        else:
+            output = search_flights(**_arguments())
         print(json.dumps(output, indent=2))
 
     # Preserve machine-readable output for any upstream error at the CLI boundary.

@@ -22,7 +22,7 @@ import search
 def leg(*, origin="JFK", destination="SFO", departure_date=None, departure_time=None,
         arrival_date=None, arrival_time=None, duration=407):
     """A synthetic Google flight leg in the format consumed by fast-flights."""
-    segment = [None] * 22
+    segment = [None] * 23
     segment[3:7] = [origin, origin, destination, destination]
     segment[8] = [21] if departure_time is None else departure_time
     segment[10] = [None, 47] if arrival_time is None else arrival_time
@@ -30,6 +30,7 @@ def leg(*, origin="JFK", destination="SFO", departure_date=None, departure_time=
     segment[17] = "Airbus A321"
     segment[20] = departure_date or [2026, 12, 1]
     segment[21] = arrival_date or [2026, 12, 2]
+    segment[22] = ["AA", "100", None, "American"]
     return segment
 
 
@@ -42,9 +43,10 @@ def itinerary(segments=None, price=364, duration=407):
     return [flight, [[None, price]] if price is not None else None]
 
 
-def response(best=None, remaining=None):
+def response(best=None, remaining=None, selected=None):
     """Wrap the two result groups in Google's structured response script."""
     payload = [None] * 8
+    payload[1] = [[None, None, selected]] if selected is not None else None
     payload[2] = [best] if best is not None else None
     payload[3] = [remaining] if remaining is not None else None
     payload[7] = [None, [[], [["AA", "American"]]]]

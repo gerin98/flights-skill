@@ -98,14 +98,22 @@ class SearchRequest:  # pylint: disable=too-many-instance-attributes
         """Echo the search so fares cannot be confused with another party or trip type."""
         return {**asdict(self), "trip_type": self.trip_type}
 
-    def notes(self):
+    def notes(self, *, return_options=False):
         """Explain the scope of Google's fares and the initial flight selection."""
         notes = ["Prices are Google's quoted totals for all requested passengers in USD."]
-        if self.return_date is not None:
+        if return_options:
+            notes.append(
+                "Each return option is priced with selected_outbound as one round trip. "
+                "The price covers both directions for all requested passengers. "
+                "Use its booking_token with get_booking_details for fare-specific bag and "
+                "seat-selection information, or open booking_url to finish manually."
+            )
+        elif self.return_date is not None:
             notes.append(
                 "Round-trip fares are shown with outbound flight options only. "
                 "Durations and segments describe the outbound journey. Select a return flight "
-                "at search_url to confirm the complete itinerary and final fare."
+                "using search_return_flights with its return_search_token, or open "
+                "return_search_url to choose manually."
             )
         if self.carry_on_bags or self.checked_bags:
             notes.append(
