@@ -7,7 +7,7 @@ permissions:
 
 jobs:
   checks:
-    name: Lint and test (Python 3.12)
+    name: Lint and test (Python 3.15)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

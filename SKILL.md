@@ -10,7 +10,7 @@ Install uv, then run from this repository:
 uv sync --locked --managed-python
 ```
 
-uv manages Python 3.12 and the project's `.venv`. The compatible dependency versions are declared in `pyproject.toml` and resolved in `uv.lock`.
+uv manages Python 3.15 and the project's `.venv`. The compatible dependency versions are declared in `pyproject.toml` and resolved in `uv.lock`.
 
 ## MCP tool
 

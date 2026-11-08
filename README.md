@@ -14,11 +14,11 @@ cd flights-skill
 uv sync --locked --managed-python
 ```
 
-uv downloads Python 3.12 if needed and creates `.venv` in the repository. You do not need to install Python separately, activate the environment, or run pip manually.
+uv downloads Python 3.15 if needed and creates `.venv` in the repository. You do not need to install Python separately, activate the environment, or run pip manually.
 
 The environment is defined by:
 
-- `.python-version`: the project's Python version, 3.12.
+- `.python-version`: the project's Python version, 3.15.
 - `pyproject.toml`: project metadata and direct dependencies.
 - `uv.lock`: resolved dependency versions, registry package hashes, and Git revisions; commit this file.
 
@@ -117,7 +117,7 @@ git ls-files -z '*.py' | xargs -0 uv run --locked --managed-python pylint
 uv run --locked --managed-python python -m unittest discover -s tests -v
 ```
 
-The [CI workflow](.github/workflows/ci.yml) runs these lint and test commands on pushes and pull requests using Ubuntu and Python 3.12 from `.python-version`. It uses the official `astral-sh/setup-uv` action, a pinned uv version, and `uv.lock` for reproducible dependencies. Pylint checks all tracked Python files; add new files to Git before running that command locally. CI uses synthetic flight responses and makes no live Google Flights searches.
+The [CI workflow](.github/workflows/ci.yml) runs these lint and test commands on pushes and pull requests using Ubuntu and Python 3.15 from `.python-version`. It uses the official `astral-sh/setup-uv` action, a pinned uv version, and `uv.lock` for reproducible dependencies. Pylint checks all tracked Python files; add new files to Git before running that command locally. CI uses synthetic flight responses and makes no live Google Flights searches.
 
 Pylint configuration is in `pyproject.toml`. It allows inspection of the compiled `selectolax.lexbor` module; intentional exceptions, such as broad error handling at the CLI/MCP boundary, are documented beside the code. Use `uv add --dev PACKAGE` for development tools.
 
