@@ -109,11 +109,17 @@ Map your integration's origin, destination, and date arguments to the script's t
 
 ## Development and testing
 
-Run the existing unit tests:
+Install the locked environment, including the Pylint development dependency, and run the checks:
 
 ```sh
-uv run --locked --managed-python python -m unittest discover -s tests
+uv sync --locked --managed-python --dev
+git ls-files -z '*.py' | xargs -0 uv run --locked --managed-python pylint
+uv run --locked --managed-python python -m unittest discover -s tests -v
 ```
+
+The [CI workflow](.github/workflows/ci.yml) runs these lint and test commands on pushes and pull requests using Ubuntu and Python 3.12 from `.python-version`. It uses the official `astral-sh/setup-uv` action, a pinned uv version, and `uv.lock` for reproducible dependencies. Pylint checks all tracked Python files; add new files to Git before running that command locally. CI uses synthetic flight responses and makes no live Google Flights searches.
+
+Pylint configuration is in `pyproject.toml`. It allows inspection of the compiled `selectolax.lexbor` module; intentional exceptions, such as broad error handling at the CLI/MCP boundary, are documented beside the code. Use `uv add --dev PACKAGE` for development tools.
 
 These tests cover query currency, v3 parsing and result conversion, overnight connections, full journey durations, price assessments and their absence, missing fares, errors, and best/remaining-flight groups using synthetic responses. They do not verify that Google Flights is reachable or that its current pages can be parsed. After dependency changes, also start the MCP client and perform a real search. The total-duration adapter relies on the structured payload format used by the pinned parser; check both together when updating the upstream revision.
 

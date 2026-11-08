@@ -1,3 +1,10 @@
+"""Exercise flight parsing and both interfaces using synthetic Google responses."""
+
+# Test method names describe the behavior without repetitive docstrings.
+# pylint: disable=missing-function-docstring
+# Each CLI test keeps its short stdout/argv setup visible in the test itself.
+# pylint: disable=duplicate-code
+
 from contextlib import redirect_stdout
 from io import StringIO
 import json
@@ -10,7 +17,9 @@ import mcp_server
 import search
 
 
-def leg(origin="JFK", destination="SFO", departure_date=None, departure_time=None,
+# The fixture mirrors the independent fields of a Google flight leg.
+# pylint: disable-next=too-many-arguments
+def leg(*, origin="JFK", destination="SFO", departure_date=None, departure_time=None,
         arrival_date=None, arrival_time=None, duration=407):
     """A synthetic Google flight leg in the format consumed by fast-flights."""
     segment = [None] * 22
@@ -25,6 +34,7 @@ def leg(origin="JFK", destination="SFO", departure_date=None, departure_time=Non
 
 
 def itinerary(segments=None, price=364, duration=407):
+    """Build an itinerary with an optional fare and total journey duration."""
     flight = [None] * 23
     flight[0:3] = ["AA", ["American"], [leg()] if segments is None else segments]
     flight[9] = duration
@@ -33,14 +43,20 @@ def itinerary(segments=None, price=364, duration=407):
 
 
 def response(best=None, remaining=None):
+    """Wrap the two result groups in Google's structured response script."""
     payload = [None] * 8
     payload[2] = [best] if best is not None else None
     payload[3] = [remaining] if remaining is not None else None
     payload[7] = [None, [[], [["AA", "American"]]]]
-    return '<script class="ds:1">AF_initDataCallback({data:' + json.dumps(payload) + ', sideChannel: {}});</script>'
+    return (
+        '<script class="ds:1">AF_initDataCallback({data:'
+        + json.dumps(payload)
+        + ', sideChannel: {}});</script>'
+    )
 
 
 class FlightSearchTests(unittest.TestCase):
+    """Check query parameters, parsing, and CLI/MCP result serialization."""
     @patch("flight_search.fetch_flights_html")
     def test_usd_query_and_overnight_flight(self, fetch):
         fetch.return_value = response(best=[itinerary()])
@@ -94,7 +110,7 @@ class FlightSearchTests(unittest.TestCase):
         self.assertEqual([f["duration_minutes"] for f in flights], [407, 415, 420])
 
     @patch("flight_search.fetch_flights_html", return_value=response(best=[], remaining=[]))
-    def test_empty_results(self, fetch):
+    def test_empty_results(self, _fetch):
         result = flight_search.search_flights("JFK", "SFO", "2026-12-01")
         self.assertEqual(result, {"currency": "USD", "current_price": None, "flights": []})
 
@@ -126,13 +142,16 @@ class FlightSearchTests(unittest.TestCase):
                     flight_search.search_flights("JFK", "SFO", "2026-12-01")
 
     @patch("flight_search.fetch_flights_html", return_value="<html>No flight data</html>")
-    def test_unexpected_page_has_a_clear_error(self, fetch):
+    def test_unexpected_page_has_a_clear_error(self, _fetch):
         with self.assertRaisesRegex(ValueError, "contains no flight data"):
             flight_search.search_flights("JFK", "SFO", "2026-12-01")
 
     @patch("flight_search.fetch_flights_html")
     def test_mcp_limits_results_but_cli_returns_all(self, fetch):
-        fetch.return_value = response(best=[itinerary() for _ in range(12)]) + '<span class="gOatQ">typical</span>'
+        fetch.return_value = (
+            response(best=[itinerary() for _ in range(12)])
+            + '<span class="gOatQ">typical</span>'
+        )
         request = {"jsonrpc": "2.0", "id": 42, "method": "tools/call", "params": {
             "name": "search_flights", "arguments": {
                 "origin": "JFK", "destination": "SFO", "date": "2026-12-01",
@@ -147,7 +166,10 @@ class FlightSearchTests(unittest.TestCase):
         self.assertEqual(len(data["flights"]), 10)
         self.assertEqual(data["flights"][0]["duration_minutes"], 407)
         output = StringIO()
-        with patch.object(sys, "argv", ["search.py", "JFK", "SFO", "2026-12-01"]), redirect_stdout(output):
+        with (
+            patch.object(sys, "argv", ["search.py", "JFK", "SFO", "2026-12-01"]),
+            redirect_stdout(output),
+        ):
             search.main()
         cli_data = json.loads(output.getvalue())
         self.assertEqual(set(cli_data), {"currency", "current_price", "flights"})
@@ -155,7 +177,7 @@ class FlightSearchTests(unittest.TestCase):
         self.assertEqual(len(cli_data["flights"]), 12)
 
     @patch("flight_search.fetch_flights_html", side_effect=RuntimeError("Search unavailable"))
-    def test_mcp_reports_upstream_errors(self, fetch):
+    def test_mcp_reports_upstream_errors(self, _fetch):
         reply = mcp_server.handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
                 "name": "search_flights", "arguments": {

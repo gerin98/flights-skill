@@ -41,7 +41,11 @@ def _duration(minutes: int) -> str:
 def _serialize_flight(flight: Flights, total_minutes: int) -> dict:
     if not flight.flights:
         raise ValueError("Flight itinerary has no segments")
-    if type(total_minutes) is not int or total_minutes < sum(leg.duration for leg in flight.flights):
+    # Exact type checking also rejects bool, which is an int subclass.
+    if (
+        type(total_minutes) is not int  # pylint: disable=unidiomatic-typecheck
+        or total_minutes < sum(leg.duration for leg in flight.flights)
+    ):
         raise ValueError("Google Flights itinerary has an invalid total duration")
 
     segments = [
@@ -67,6 +71,7 @@ def _serialize_flight(flight: Flights, total_minutes: int) -> dict:
 
 
 def search_flights(origin: str, destination: str, date: str, *, limit: int | None = None) -> dict:
+    """Return USD fares, full journey durations, and Google's search price assessment."""
     query = create_query(
         flights=[FlightQuery(date=date, from_airport=origin, to_airport=destination)],
         trip="one-way",

@@ -16,3 +16,13 @@ package = false
 
 [tool.uv.sources]
 fast-flights = { git = "https://github.com/AWeirdDev/flights.git", rev = "4261437c506b228d20969910178a19e6d1bd2592" }
+
+[tool.pylint.main]
+# Allow Pylint to inspect selectolax's compiled HTML parser.
+extension-pkg-allow-list = ["selectolax.lexbor"]
+persistent = false
+
+[dependency-groups]
+dev = [
+    "pylint>=4.1.3",
+]
