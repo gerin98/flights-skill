@@ -1,108 +1,124 @@
-# Free Google Flights API (MCP Server & OpenClaw Skill) ✈️
+# Flights MCP
 
-**The only free, real-time Google Flights API wrapper for AI Agents, Claude, and Python.**
+Search Google Flights from a command-line script or an MCP client such as Codex or Claude Desktop. This fork of [Anmoldureha/flights-skill](https://github.com/Anmoldureha/flights-skill) uses [uv](https://docs.astral.sh/uv/) to manage Python and dependencies.
 
-> ⭐️ **Star this repo** if you hate enterprise API pricing.
+The server uses the unofficial [fast-flights](https://github.com/AWeirdDev/flights) scraper. No API key is required. Searches are one-way, economy, for one adult; the MCP server returns up to 10 flights. Prices are returned as displayed by Google Flights; the current server does not explicitly select a currency. Scraping can fail when Google changes its pages or blocks requests. The server's fallback can send search parameters to a third-party Playwright service.
 
-This tool wraps the [fast-flights](https://github.com/AWeirdDev/flights) library to provide a clean **JSON API** for flight data. No API keys, no Selenium bloat, just raw Protobuf decoding.
+## Installation
 
-## 🚀 Features
-- **Real-time Google Flights Data**: Scrapes live prices via Protobuf reverse-engineering.
-- **Structured Output**: Returns clean JSON for AI consumption.
-- **Fast**: No browser automation required (uses `requests` fallback).
-- **Unit Tested**: Includes comprehensive test suite.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then clone this fork:
 
-## 📦 Installation
-
-1.  **Clone the repo:**
-    ```bash
-    git clone https://github.com/Anmoldureha/flights-skill.git
-    cd flights-skill
-    ```
-
-2.  **Set up Python environment:**
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install fast-flights typing-extensions
-    ```
-
-## 🛠️ Usage
-
-Run the script directly from the command line:
-
-```bash
-# Syntax: python search.py ORIGIN DEST DATE
-python search.py SFO JFK 2026-03-01
+```sh
+git clone git@github.com:gerin98/flights-skill.git
+cd flights-skill
+uv sync --locked --managed-python
 ```
 
-**Output:**
+uv downloads Python 3.12 if needed and creates `.venv` in the repository. You do not need to install Python separately, activate the environment, or run pip manually.
+
+The environment is defined by:
+
+- `.python-version`: the project's Python version, 3.12.
+- `pyproject.toml`: project metadata and direct dependencies.
+- `uv.lock`: resolved dependency versions and package hashes; commit this file.
+
+`fast-flights==2.2` is pinned because the server uses its v2 API. `primp==0.15.0` is pinned because that API requests browser profiles incompatible with newer primp versions. Upgrading either requires compatibility checks. `--locked` stops if the manifest and lockfile disagree rather than silently changing the lockfile.
+
+If you already have the manually created `.venv`, run the same `uv sync` command to reconcile it with the project's lockfile. The repository now contains the launcher; no separate setup script is needed.
+
+## Command-line usage
+
+Run from the repository directory:
+
+```sh
+# Arguments: origin airport, destination airport, departure date (YYYY-MM-DD).
+uv run --locked --managed-python python search.py JFK SFO 2026-12-01
+```
+
+The script prints JSON with `current_price` and a `flights` array containing airline name, price, duration, departure, arrival, and stops. Use a future departure date when trying the example.
+
+## MCP setup
+
+`launch-mcp.sh` changes to the repository directory, uses `uv run` to synchronize the locked environment, and starts the server with unbuffered stdout. The server uses stdout for MCP messages and writes diagnostics to `mcp_server.log` in the checkout.
+
+### Codex
+
+Run from the repository directory:
+
+```sh
+codex mcp add flights --env "UV_BIN=$(command -v uv)" -- /bin/sh "$PWD/launch-mcp.sh"
+```
+
+`UV_BIN` records the absolute uv path so the launcher also works when Codex's GUI environment does not include uv on `PATH`. Restart Codex after registration.
+
+If an existing `flights` entry already launches this checkout's `launch-mcp.sh`, keep it and restart Codex after updating the files. If uv is not on the client's `PATH`, set `UV_BIN` in that server's environment to the output of `command -v uv`.
+
+### Claude Desktop
+
+Add this server to `claude_desktop_config.json`, substituting your absolute repository and uv paths:
+
 ```json
 {
-  "current_price": "typical",
-  "flights": [
-    {
-      "name": "Delta",
-      "price": "$120",
-      "duration": "5h 30m",
-      ...
+  "mcpServers": {
+    "flights": {
+      "command": "/bin/sh",
+      "args": ["/absolute/path/to/flights-skill/launch-mcp.sh"],
+      "env": {
+        "UV_BIN": "/absolute/path/to/uv"
+      }
     }
-  ]
+  }
 }
 ```
 
-## 🧪 Testing
+Restart Claude Desktop after saving the configuration.
 
-Run the unit tests to verify logic:
+### Tool interface
 
-```bash
-python3 tests/test_search.py
+The MCP tool is `search_flights`:
+
+```json
+{
+  "origin": "JFK",
+  "destination": "SFO",
+  "date": "2026-12-01"
+}
 ```
 
-## 🤖 Agent Integration
+For example, ask your MCP client to find one-way flights from JFK to SFO on a future date.
 
-### Claude Code (MCP)
-This repo includes a native **MCP Server** implementation (compatible with Claude Desktop).
+### OpenClaw / script integration
 
-1.  Add to your `claude_desktop_config.json`:
-    ```json
-    {
-      "mcpServers": {
-        "flights": {
-          "command": "/absolute/path/to/skills/flights/venv/bin/python3",
-          "args": ["/absolute/path/to/skills/flights/mcp_server.py"]
-        }
-      }
-    }
-    ```
-2.  Restart Claude Desktop. You can now ask: "Find me cheap flights to Tokyo".
+Run from this checkout, or use an absolute path with `--directory`:
 
-### OpenClaw
-Add this repo to your skills directory and map `flight_search` to:
-`venv/bin/python3 search.py {{from}} {{to}} {{date}}`
+```sh
+uv run --directory /absolute/path/to/flights-skill --locked --managed-python python search.py JFK SFO 2026-12-01
+```
 
-## 🌟 Why is this great? (The Advantage)
+Map your integration's origin, destination, and date arguments to the script's three positional arguments.
 
-Most flight search APIs are broken, expensive, or stale. This tool solves the "Google Flights Data Problem":
+## Development and testing
 
-### 1. 🧠 AI-Native Design
-Most scrapers return messy HTML. This tool outputs **clean, structured JSON** specifically optimized for LLM consumption.
-*   **Lower Token Cost**: No fluff, just data.
-*   **Higher Accuracy**: Agents don't have to hallucinate parsing logic.
+Run the existing unit tests:
 
-### 2. ⚡ The "Impossible" API
-Google discontinued their public Flights API in 2018. Developers have been forced to use:
-*   **Expensive Aggregators** (Amadeus/Duffel): Cost $0.002+ per request and require KYC.
-*   **Slow Selenium Bots**: Break easily and take 10s+ to load.
-*   **Stale Data**: Most APIs cache prices for 24 hours.
+```sh
+uv run --locked --managed-python python -m unittest discover -s tests
+```
 
-**This tool hacks the matrix.** It reverse-engineers the Protobuf data stream used by Google's own frontend, giving you **Enterprise-grade speed (ms)** without the Enterprise price tag.
+These tests mock flight results. They do not verify that Google Flights is reachable or that its current pages can be parsed. After dependency changes, also start the MCP client and perform a real search.
 
-### 3. 🛡️ Local & Private
-Runs 100% on your machine (or your agent's container). No third-party server logging your travel plans or selling your search intent data to airlines.
+Use `uv add PACKAGE` to add a dependency and update both `pyproject.toml` and `uv.lock`. Review and commit those files together. To update transitive dependencies within the pinned direct requirements:
 
-## 🙏 Credits
+```sh
+uv lock --upgrade
+uv sync --locked --managed-python
+uv run --locked --managed-python python -m unittest discover -s tests
+```
 
-This skill is a wrapper around the brilliant **[fast-flights](https://github.com/AWeirdDev/flights)** library by **AWeirdDev**.
-They did the heavy lifting of reverse-engineering Google's Protobuf format. Go star their repo! ⭐
+Keep `.venv`, logs, and local backups out of Git. For personal forks, configure commit identity and signing with repository-local Git settings.
 
+## Credits
+
+Original MCP wrapper: [Anmoldureha/flights-skill](https://github.com/Anmoldureha/flights-skill).
+
+Flight search library: [AWeirdDev/flights](https://github.com/AWeirdDev/flights).

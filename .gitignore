@@ -1,4 +1,7 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 .DS_Store
+*.log
+mcp_server.py.backup-*
