@@ -6,7 +6,7 @@ from datetime import date as Date
 import json
 import re
 
-from search_options import SearchRequest
+from search_options import METRO_AIRPORTS, SearchRequest
 
 
 def raw_selection(flight):
@@ -24,7 +24,8 @@ def raw_selection(flight):
 def _validate_selection(segments, origin, destination, date):
     if not isinstance(segments, list) or not 1 <= len(segments) <= 8:
         raise ValueError("A selection must contain between 1 and 8 flight segments")
-    previous_airport, previous_date = origin, date
+    expected_origins = METRO_AIRPORTS.get(origin, {origin})
+    previous_date = date
     for index, segment in enumerate(segments):
         patterns = {
             "origin": r"[A-Z]{3}", "destination": r"[A-Z]{3}", "date": r"\d{4}-\d{2}-\d{2}",
@@ -36,12 +37,13 @@ def _validate_selection(segments, origin, destination, date):
             if not isinstance(segment[name], str) or not re.fullmatch(pattern, segment[name]):
                 raise ValueError(f"Invalid selected flight {name}")
         Date.fromisoformat(segment["date"])
-        if segment["origin"] != previous_airport or segment["date"] < previous_date:
+        if segment["origin"] not in expected_origins or segment["date"] < previous_date:
             raise ValueError("Selected flight segments do not form the requested journey")
         if index == 0 and segment["date"] != date:
             raise ValueError("Selected flight date does not match the search")
-        previous_airport, previous_date = segment["destination"], segment["date"]
-    if previous_airport != destination:
+        expected_origins = {segment["destination"]}
+        previous_date = segment["date"]
+    if expected_origins.isdisjoint(METRO_AIRPORTS.get(destination, {destination})):
         raise ValueError("Selected flight destination does not match the search")
 
 

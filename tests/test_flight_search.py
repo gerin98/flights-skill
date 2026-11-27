@@ -115,8 +115,11 @@ class FlightSearchTests(unittest.TestCase):
         self.assertEqual([f["price"] for f in flights], ["$364", "$379", None])
         self.assertEqual([f["duration_minutes"] for f in flights], [407, 415, 420])
 
-    @patch("flight_search.fetch_flights_html", return_value=response(best=[], remaining=[]))
-    def test_empty_results(self, _fetch):
+    @patch("flight_search.fetch_flights_html")
+    def test_empty_results_without_airline_metadata(self, fetch):
+        fetch.return_value = response(best=[], remaining=[]).replace(
+            '[[], [["AA", "American"]]]', '[[]]',
+        )
         result = flight_search.search_flights("JFK", "SFO", "2026-12-01")
         self.assertEqual(result["flights"], [])
         self.assertEqual(result["currency"], "USD")
@@ -153,6 +156,31 @@ class FlightSearchTests(unittest.TestCase):
     def test_unexpected_page_has_a_clear_error(self, _fetch):
         with self.assertRaisesRegex(ValueError, "contains no flight data"):
             flight_search.search_flights("JFK", "SFO", "2026-12-01")
+
+    @patch("flight_search.fetch_flights_html")
+    def test_google_error_callback_has_a_clear_error(self, fetch):
+        fetch.return_value = (
+            '<script class="ds:1">AF_initDataCallback({data:[13,null,[]],'
+            'errorHasStatus: true,});</script>'
+        )
+        with self.assertRaisesRegex(ValueError, "Google Flights returned an error"):
+            flight_search.search_flights("JFK", "SFO", "2026-12-01")
+
+    @patch("flight_search.fetch_flights_html")
+    def test_metro_search_falls_back_to_airport_pairs(self, fetch):
+        def route_response(query):
+            origin = query.flight_data[0].from_airport.airport
+            if origin == "JFK":
+                return response(best=[itinerary()])
+            return '<html>No flight data</html>'
+
+        fetch.side_effect = route_response
+        result = flight_search.search_flights("NYC", "SFO", "2026-12-01")
+        self.assertEqual(result["search"]["origin"], "NYC")
+        self.assertEqual(result["flights"][0]["segments"][0]["origin"], "JFK")
+        self.assertIn("booking_token", result["flights"][0])
+        self.assertIsNone(result["current_price"])
+        self.assertIn("Google did not return flight data for every airport pair.", result["notes"])
 
     @patch("flight_search.fetch_flights_html")
     def test_mcp_limits_results_but_cli_returns_all(self, fetch):

@@ -8,6 +8,10 @@ from fast_flights import FlightQuery, Passengers, create_query
 
 
 CABINS = ("economy", "premium-economy", "business", "first")
+METRO_AIRPORTS = {
+    "NYC": frozenset({"JFK", "EWR", "LGA"}),
+    "PAR": frozenset({"CDG", "ORY", "BVA"}),
+}
 COUNT_LIMITS = {
     "adults": (1, 9),
     "children": (0, 8),
@@ -49,7 +53,7 @@ class SearchRequest:  # pylint: disable=too-many-instance-attributes
         for name in ("origin", "destination"):
             value = getattr(self, name)
             if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z]{3}", value):
-                raise ValueError(f"{name} must be a three-letter airport code")
+                raise ValueError(f"{name} must be a three-letter airport or metro code")
             setattr(self, name, value.upper())
         if self.origin == self.destination:
             raise ValueError("origin and destination must be different airports")
@@ -129,8 +133,10 @@ class SearchRequest:  # pylint: disable=too-many-instance-attributes
 
 
 SEARCH_PROPERTIES = {
-    "origin": {"type": "string", "description": "Origin airport code, e.g. JFK"},
-    "destination": {"type": "string", "description": "Destination airport code, e.g. CDG"},
+    "origin": {"type": "string", "description": "Origin airport code or NYC or PAR metro code"},
+    "destination": {
+        "type": "string", "description": "Destination airport code or NYC or PAR metro code",
+    },
     "date": {"type": "string", "description": "Departure date in YYYY-MM-DD format"},
     "return_date": {
         "type": "string",

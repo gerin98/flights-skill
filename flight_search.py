@@ -1,36 +1,85 @@
 """Shared fast-flights v3 query and JSON conversion for the CLI and MCP server."""
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import product
 import json
 
 from fast_flights import fetch_flights_html
 from fast_flights.model import Flights, SimpleDatetime
 from fast_flights.parser import parse_js
+from fast_flights.querying import Query
 from selectolax.lexbor import LexborHTMLParser
 
-from search_options import SearchRequest
+from search_options import METRO_AIRPORTS, SearchRequest
 from flight_selection import decode_selection, encode_selection, raw_selection, selected_query
+
+
+class _GoogleFlightsResponseError(ValueError):
+    """Google's response lacks usable search results."""
+
+
+@dataclass
+class _AlternateResultsQuery(Query):
+    """Retry a query with a different Google Flights result view."""
+
+    view: str | None = None
+
+    def params(self):
+        """Change the result view while keeping the selected flight and filters."""
+        params = super().params()
+        if self.view is None:
+            del params["tfu"]
+        else:
+            params["tfu"] = self.view
+        return params
 
 
 def _page_data(parser):
     script = parser.css_first(r"script.ds\:1")
     if script is None:
-        raise ValueError("Google Flights response contains no flight data")
-    javascript = script.text()
-    payload = json.loads(javascript.split("data:", 1)[1].rsplit(",", 1)[0])
-    return javascript, payload
+        raise _GoogleFlightsResponseError("Google Flights response contains no flight data")
+    _, marker, data = script.text().partition("data:")
+    if not marker:
+        raise _GoogleFlightsResponseError("Google Flights response contains no flight data")
+    data = data.lstrip()
+    payload, end = json.JSONDecoder().raw_decode(data)
+    if "errorHasStatus: true" in data[end:] or not isinstance(payload, list) or len(payload) < 8:
+        raise _GoogleFlightsResponseError(
+            "Google Flights returned an error for this search. "
+            "Retry or open Google Flights directly."
+        )
+    return payload
 
 
-def _parse_results(parser: LexborHTMLParser) -> list[tuple[Flights, list]]:
-    javascript, payload = _page_data(parser)
-    flights = parse_js(javascript)
+def _fetch_page(query):
+    alternatives = (query, _AlternateResultsQuery(**vars(query), view="CgIIAA"))
+    for candidate in alternatives:
+        parser = LexborHTMLParser(fetch_flights_html(candidate))
+        try:
+            return parser, _page_data(parser)
+        except _GoogleFlightsResponseError:
+            continue
+    parser = LexborHTMLParser(fetch_flights_html(_AlternateResultsQuery(**vars(query))))
+    return parser, _page_data(parser)
+
+
+def _parse_results(payload: list) -> list[tuple[Flights, list]]:
     # Preserve total duration and selectable flight identities omitted by the v3 model.
     raw_flights = [
         entry[0]
         for section in payload[2:4] if section
         for entry in section[0] or []
     ]
-    return list(zip(flights, raw_flights, strict=True))
+    if not raw_flights:
+        return []
+    return list(zip(_parse_payload(payload), raw_flights, strict=True))
+
+
+def _parse_payload(payload):
+    # Give the upstream parser a consistent callback wrapper around the decoded JSON.
+    return parse_js("data:" + json.dumps(payload) + ", sideChannel: {}")
 
 
 def _local_datetime(value: SimpleDatetime) -> str:
@@ -97,41 +146,81 @@ def _add_selection(result, raw, request, selected=None):
     )
 
 
-def search_flights(
-    origin: str, destination: str, date: str, *, limit: int | None = None, **options,
-) -> dict:
-    """Return USD fares, full journey durations, and Google's search price assessment."""
-    request = SearchRequest(origin=origin, destination=destination, date=date, **options)
-    query = request.query()
-    parser = LexborHTMLParser(fetch_flights_html(query))
-    results = _parse_results(parser)
+def _result_with_selection(flight, raw, request, selected=None):
+    result = _serialize_result(flight, raw)
+    try:
+        _add_selection(result, raw, request, selected)
+    except ValueError:
+        result["selection_unavailable"] = True
+    return result
+
+
+def _search_route(request, limit):
+    parser, payload = _fetch_page(request.query())
+    results = _parse_results(payload)
     # The v3 model omits Google's search-wide price assessment in the HTML.
     price_node = parser.css_first("span.gOatQ")
     current_price = price_node.text(strip=True).lower() if price_node else None
     if current_price not in {"low", "typical", "high"}:
         current_price = None
-    flights = []
-    for flight, raw in results[:limit]:
-        result = _serialize_result(flight, raw)
+    flights = [_result_with_selection(flight, raw, request) for flight, raw in results[:limit]]
+    return flights, current_price
+
+
+def _search_metro_airports(request, limit):
+    origins = sorted(METRO_AIRPORTS.get(request.origin, {request.origin}))
+    destinations = sorted(METRO_AIRPORTS.get(request.destination, {request.destination}))
+    routes = [
+        (origin, destination) for origin, destination in product(origins, destinations)
+        if origin != destination
+    ]
+
+    def search_route(route):
         try:
-            _add_selection(result, raw, request)
-        except ValueError:
-            result["selection_unavailable"] = True
-        flights.append(result)
+            return _search_route(replace(request, origin=route[0], destination=route[1]), limit)[0]
+        except _GoogleFlightsResponseError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(search_route, routes))
+    if all(result is None for result in results):
+        raise _GoogleFlightsResponseError("Google Flights returned errors for the metro airports.")
+    flights = [flight for result in results if result is not None for flight in result]
+    flights.sort(key=lambda flight: (
+        int(flight["price"][1:].replace(",", "")) if flight["price"] else float("inf")
+    ))
+    return flights[:limit], any(result is None for result in results)
+
+
+def search_flights(
+    origin: str, destination: str, date: str, *, limit: int | None = None, **options,
+) -> dict:
+    """Return USD fares, full journey durations, and Google's search price assessment."""
+    request = SearchRequest(origin=origin, destination=destination, date=date, **options)
+    notes = request.notes()
+    try:
+        flights, current_price = _search_route(request, limit)
+    except _GoogleFlightsResponseError:
+        if request.origin not in METRO_AIRPORTS and request.destination not in METRO_AIRPORTS:
+            raise
+        flights, partial = _search_metro_airports(request, limit)
+        current_price = None
+        notes.append("Google returned fares from individual airport pairs for this metro search.")
+        if partial:
+            notes.append("Google did not return flight data for every airport pair.")
     return {
         "currency": "USD",
         "current_price": current_price,
         "search": request.metadata(),
-        "search_url": query.url(),
+        "search_url": request.query().url(),
         "price_scope": f"{request.trip_type}_all_passengers",
         "result_scope": "outbound_options" if request.return_date else "one_way_itineraries",
-        "notes": request.notes(),
+        "notes": notes,
         "flights": flights,
     }
 
 
-def _selected_outbound(parser, expected_selection):
-    _, payload = _page_data(parser)
+def _selected_outbound(payload, expected_selection):
     try:
         outbound_raw = payload[1][0][2]
         if raw_selection(outbound_raw) != expected_selection:
@@ -144,7 +233,7 @@ def _selected_outbound(parser, expected_selection):
     selected_payload = [None] * 8
     selected_payload[2] = [[[outbound_raw, None]]]
     selected_payload[7] = payload[7]
-    outbound = parse_js("data:" + json.dumps(selected_payload) + ", sideChannel: {}")[0]
+    outbound = _parse_payload(selected_payload)[0]
     selected_outbound = _serialize_result(outbound, outbound_raw)
     selected_outbound.pop("price")
     return selected_outbound
@@ -156,13 +245,12 @@ def search_return_flights(selection_token: str, *, limit: int | None = None) -> 
     if not request.return_date or len(selections) != 1:
         raise ValueError("Use a return_search_token from a round-trip outbound result")
     query = selected_query(request, selections)
-    parser = LexborHTMLParser(fetch_flights_html(query))
-    selected_outbound = _selected_outbound(parser, selections[0])
-    flights = []
-    for flight, raw in _parse_results(parser)[:limit]:
-        result = _serialize_result(flight, raw)
-        _add_selection(result, raw, request, selections)
-        flights.append(result)
+    _, payload = _fetch_page(query)
+    selected_outbound = _selected_outbound(payload, selections[0])
+    flights = [
+        _result_with_selection(flight, raw, request, selections)
+        for flight, raw in _parse_results(payload)[:limit]
+    ]
     return {
         "currency": "USD", "search": request.metadata(), "search_url": query.url(),
         "price_scope": "round-trip_all_passengers", "result_scope": "return_options",

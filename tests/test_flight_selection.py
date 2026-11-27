@@ -78,6 +78,26 @@ class FlightSelectionTests(unittest.TestCase):
                     search_return_flights(self.token)
 
     @patch("flight_search.fetch_flights_html")
+    def test_return_retry_keeps_valid_options_when_a_nearby_airport_is_suggested(self, fetch):
+        nearby = itinerary(segments=[leg(
+            origin="SFO", destination="LGA", departure_date=[2026, 12, 10],
+        )])
+        fetch.side_effect = [
+            '<script class="ds:1">AF_initDataCallback({data:[13,null,[]],'
+            'errorHasStatus: true,});</script>',
+            response(best=[nearby, self.return_flight], selected=self.outbound),
+        ]
+
+        nearby_result, valid_result = search_return_flights(self.token)["flights"]
+        first_query, retry_query = [call.args[0] for call in fetch.call_args_list]
+        self.assertEqual(first_query.to_bytes(), retry_query.to_bytes())
+        self.assertNotEqual(first_query.params()["tfu"], retry_query.params()["tfu"])
+        self.assertTrue(nearby_result["selection_unavailable"])
+        self.assertNotIn("booking_token", nearby_result)
+        self.assertEqual(valid_result["price"], "$831")
+        self.assertIn("booking_token", valid_result)
+
+    @patch("flight_search.fetch_flights_html")
     def test_outbound_and_one_way_results_have_correct_continuations(self, fetch):
         fetch.return_value = response(best=[itinerary()])
         round_trip = search_flights("JFK", "SFO", "2026-12-01", return_date="2026-12-10")
@@ -114,6 +134,21 @@ class FlightSelectionTests(unittest.TestCase):
         self.assertEqual(decode_selection(token)[1][0][1]["date"], "2026-12-02")
         query = selected_query(self.request, [selection])
         self.assertIn(b"2026-12-02", query.flight_data[0].SerializeToString())
+
+    def test_metro_selection_accepts_member_airports_and_rejects_unrelated_ones(self):
+        request = SearchRequest(
+            origin="NYC", destination="PAR", date="2026-12-01", return_date="2026-12-10",
+        )
+        outbound = [self.selected[0] | {"destination": "CDG"}]
+        returning = [raw_selection(self.return_flight[0])[0] | {
+            "origin": "ORY", "destination": "EWR",
+        }]
+        token = encode_selection(request, [outbound, returning])
+        self.assertEqual(decode_selection(token), (request, [outbound, returning]))
+
+        unrelated = [returning[0] | {"destination": "BOS"}]
+        with self.assertRaisesRegex(ValueError, "destination does not match"):
+            encode_selection(request, [outbound, unrelated])
 
 
 if __name__ == "__main__":
